@@ -1,0 +1,762 @@
+<script>
+    // 全局变量
+    let isRecording = false;
+    let recognition;
+    let currentModelType = 'object';
+    let generatedModelData = null;
+
+    // DOM元素
+    const recordBtn = document.getElementById('record-btn');
+    const voiceResult = document.getElementById('voice-result');
+    const keywordsContainer = document.getElementById('keywords-container');
+    const generateBtn = document.getElementById('generate-btn');
+    const loadingElement = document.getElementById('loading');
+    const optionButtons = document.querySelectorAll('.option-btn');
+    const downloadObjBtn = document.getElementById('download-obj');
+    const downloadStlBtn = document.getElementById('download-stl');
+    const previewContainer = document.getElementById('preview-container');
+    const steps = document.querySelectorAll('.step');
+    const downloadStatus = document.getElementById('download-status');
+
+    // 扩展关键词库
+    const keywordLibrary = {
+        // 形状关键词
+        shapes: {
+            '基本几何体': ['立方体', '长方体', '正方体', '球体', '圆柱体', '圆锥体', '圆台', '棱柱', '棱锥', '圆环', '环面'],
+            '复杂几何体': ['螺旋', '星形', '心形', '金字塔', '四面体', '八面体', '十二面体', '二十面体', '多面体', '不规则体'],
+            '建筑形状': ['房子', '建筑', '塔', '桥', '拱门', '穹顶', '柱子', '台阶', '楼梯', '屋顶'],
+            '自然形状': ['树', '石头', '山', '云', '水滴', '叶子', '花朵', '动物', '人物', '器官']
+        },
+        
+        // 尺寸关键词
+        dimensions: {
+            '精确尺寸': ['长', '宽', '高', '直径', '半径', '厚度', '深度', '边长'],
+            '相对尺寸': ['大', '小', '中等', '巨大', '微小', '加长', '加宽', '加高', '缩小', '放大'],
+            '单位': ['厘米', '公分', '毫米', '米', 'cm', 'mm', 'm']
+        },
+        
+        // 颜色关键词
+        colors: {
+            '基础色': ['红色', '蓝色', '绿色', '黄色', '黑色', '白色', '灰色', '透明', '无色'],
+            '扩展色': ['橙色', '紫色', '粉色', '棕色', '青色', '金色', '银色', '古铜色', '玫瑰金'],
+            '色调': ['深色', '浅色', '亮色', '暗色', '鲜艳', '柔和', '渐变色', '彩虹色']
+        },
+        
+        // 材质关键词
+        materials: {
+            '表面质感': ['光滑', '粗糙', '磨砂', '抛光', '哑光', '亮光', '纹理', '条纹', '斑点'],
+            '材料类型': ['金属', '木质', '塑料', '玻璃', '陶瓷', '石头', '布料', '皮革', '橡胶', '纸张'],
+            '材料特性': ['透明', '半透明', '不透明', '反光', '发光', '荧光', '金属质感', '木质纹理']
+        },
+        
+        // 结构关键词
+        structures: {
+            '基本结构': ['实心', '空心', '镂空', '网格', '框架', '壳体', '实体'],
+            '复杂结构': ['螺旋结构', '网格结构', '蜂窝结构', '骨架结构', '网状结构', '分层结构'],
+            '特征结构': ['圆角', '倒角', '斜角', '孔洞', '凹槽', '凸起', '凹陷', '花纹', '图案']
+        },
+        
+        // 操作关键词
+        operations: {
+            '创建操作': ['创建', '生成', '制作', '设计', '建造', '构造'],
+            '修改操作': ['添加', '删除', '修改', '调整', '改变', '编辑', '优化'],
+            '组合操作': ['合并', '组合', '连接', '分离', '切割', '拆分', '组装']
+        },
+        
+        // 专业术语
+        professional: {
+            '数学术语': ['对称', '不对称', '平行', '垂直', '角度', '弧度', '曲线', '曲面'],
+            '工程术语': ['公差', '精度', '强度', '硬度', '韧性', '密度', '重量'],
+            '设计术语': ['比例', '尺度', '平衡', '韵律', '节奏', '对比', '统一']
+        }
+    };
+
+    // 初始化语音识别
+    function initSpeechRecognition() {
+        if ('webkitSpeechRecognition' in window) {
+            recognition = new webkitSpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = 'zh-CN';
+
+            recognition.onstart = function() {
+                isRecording = true;
+                recordBtn.classList.add('recording');
+                recordBtn.innerHTML = '<i class="fas fa-stop"></i><span>停止录音</span>';
+                voiceResult.innerHTML = '<p>正在聆听...请详细描述您的3D模型</p>';
+            };
+
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                processVoiceResult(transcript);
+            };
+
+            recognition.onerror = function(event) {
+                console.error('语音识别错误:', event.error);
+                voiceResult.innerHTML = '<p style="color: var(--danger-color);">语音识别失败，请重试</p>';
+                resetRecordingUI();
+            };
+
+            recognition.onend = function() {
+                resetRecordingUI();
+            };
+        } else {
+            voiceResult.innerHTML = '<p style="color: var(--danger-color);">您的浏览器不支持语音识别，请使用Chrome浏览器</p>';
+        }
+    }
+
+    function resetRecordingUI() {
+        isRecording = false;
+        recordBtn.classList.remove('recording');
+        recordBtn.innerHTML = '<i class="fas fa-microphone"></i><span>开始录音</span>';
+    }
+
+    // 处理语音识别结果
+    function processVoiceResult(text) {
+        voiceResult.innerHTML = `<p><strong>识别结果:</strong> ${text}</p>`;
+        const extractedKeywords = extractKeywords(text);
+        displayKeywords(extractedKeywords);
+        updateStep(2);
+    }
+
+    // 增强版关键词提取
+    function extractKeywords(text) {
+        const foundKeywords = [];
+        const keywordCategories = [];
+        
+        // 预处理文本
+        const normalizedText = text.toLowerCase();
+        
+        // 遍历所有关键词类别
+        for (const [category, subcategories] of Object.entries(keywordLibrary)) {
+            for (const [subcategory, keywords] of Object.entries(subcategories)) {
+                keywords.forEach(keyword => {
+                    if (normalizedText.includes(keyword.toLowerCase())) {
+                        foundKeywords.push(keyword);
+                        if (!keywordCategories.includes(subcategory)) {
+                            keywordCategories.push(subcategory);
+                        }
+                    }
+                });
+            }
+        }
+        
+        // 提取尺寸信息
+        const dimensions = extractDimensions(text);
+        foundKeywords.push(...dimensions);
+        
+        // 提取颜色信息
+        const colors = extractColors(text);
+        foundKeywords.push(...colors);
+        
+        // 提取材质信息
+        const materials = extractMaterials(text);
+        foundKeywords.push(...materials);
+        
+        // 智能推断缺失信息
+        const inferredKeywords = inferMissingKeywords(foundKeywords, text);
+        foundKeywords.push(...inferredKeywords);
+        
+        return {
+            keywords: [...new Set(foundKeywords)], // 去重
+            categories: keywordCategories,
+            dimensions: dimensions,
+            colors: colors,
+            materials: materials
+        };
+    }
+
+    // 提取尺寸信息
+    function extractDimensions(text) {
+        const dimensions = [];
+        
+        // 匹配数字+单位
+        const sizePatterns = [
+            /(\d+(?:\.\d+)?)\s*(厘米|公分|cm)/gi,
+            /(\d+(?:\.\d+)?)\s*(毫米|mm)/gi,
+            /(\d+(?:\.\d+)?)\s*(米|m)/gi,
+            /长\s*(\d+(?:\.\d+)?)/gi,
+            /宽\s*(\d+(?:\.\d+)?)/gi,
+            /高\s*(\d+(?:\.\d+)?)/gi,
+            /直径\s*(\d+(?:\.\d+)?)/gi,
+            /半径\s*(\d+(?:\.\d+)?)/gi
+        ];
+        
+        sizePatterns.forEach(pattern => {
+            const matches = text.match(pattern);
+            if (matches) {
+                dimensions.push(...matches);
+            }
+        });
+        
+        return dimensions;
+    }
+
+    // 提取颜色信息
+    function extractColors(text) {
+        const colors = [];
+        const colorWords = [
+            '红色', '蓝色', '绿色', '黄色', '黑色', '白色', '灰色',
+            '橙色', '紫色', '粉色', '棕色', '青色', '金色', '银色'
+        ];
+        
+        colorWords.forEach(color => {
+            if (text.includes(color)) {
+                colors.push(color);
+            }
+        });
+        
+        return colors;
+    }
+
+    // 提取材质信息
+    function extractMaterials(text) {
+        const materials = [];
+        const materialWords = [
+            '金属', '木质', '塑料', '玻璃', '陶瓷', '石头', '布料',
+            '皮革', '橡胶', '光滑', '粗糙', '磨砂', '抛光', '透明'
+        ];
+        
+        materialWords.forEach(material => {
+            if (text.includes(material)) {
+                materials.push(material);
+            }
+        });
+        
+        return materials;
+    }
+
+    // 智能推断缺失信息
+    function inferMissingKeywords(foundKeywords, text) {
+        const inferred = [];
+        
+        // 如果没有指定形状，根据上下文推断
+        if (!foundKeywords.some(k => 
+            ['立方体', '球体', '圆柱体', '圆锥体', '长方体'].includes(k))) {
+            if (text.includes('建筑') || text.includes('房子')) {
+                inferred.push('长方体');
+            } else if (text.includes('球') || text.includes('圆形')) {
+                inferred.push('球体');
+            } else if (text.includes('柱') || text.includes('管')) {
+                inferred.push('圆柱体');
+            }
+        }
+        
+        // 如果没有指定颜色，根据材质推断
+        if (foundKeywords.some(k => ['金属', '黄金', '白银'].includes(k)) && 
+            !foundKeywords.some(k => ['金色', '银色', '灰色'].includes(k))) {
+            if (text.includes('金')) inferred.push('金色');
+            else if (text.includes('银')) inferred.push('银色');
+            else inferred.push('金属灰');
+        }
+        
+        return inferred;
+    }
+
+    // 显示关键词（增强版）
+    function displayKeywords(keywordData) {
+        keywordsContainer.innerHTML = '';
+        
+        if (keywordData.keywords.length === 0) {
+            keywordsContainer.innerHTML = '<p>未识别到关键词，请尝试更具体的描述</p>';
+            return;
+        }
+        
+        // 按类别分组显示关键词
+        const categories = {
+            '形状': keywordData.keywords.filter(k => 
+                Object.values(keywordLibrary.shapes).flat().includes(k)),
+            '尺寸': keywordData.dimensions,
+            '颜色': keywordData.colors,
+            '材质': keywordData.materials,
+            '其他': keywordData.keywords.filter(k => 
+                !Object.values(keywordLibrary.shapes).flat().includes(k) &&
+                !keywordData.dimensions.includes(k) &&
+                !keywordData.colors.includes(k) &&
+                !keywordData.materials.includes(k))
+        };
+        
+        for (const [category, keywords] of Object.entries(categories)) {
+            if (keywords.length > 0) {
+                const categoryElement = document.createElement('div');
+                categoryElement.className = 'keyword-category';
+                categoryElement.innerHTML = `<strong>${category}:</strong>`;
+                
+                const keywordsElement = document.createElement('div');
+                keywordsElement.className = 'keyword-group';
+                
+                keywords.forEach(keyword => {
+                    const keywordElement = document.createElement('div');
+                    keywordElement.className = 'keyword';
+                    keywordElement.textContent = keyword;
+                    keywordsElement.appendChild(keywordElement);
+                });
+                
+                categoryElement.appendChild(keywordsElement);
+                keywordsContainer.appendChild(categoryElement);
+            }
+        }
+        
+        // 显示识别统计
+        const statsElement = document.createElement('div');
+        statsElement.className = 'keyword-stats';
+        statsElement.innerHTML = `<small>识别到 ${keywordData.keywords.length} 个关键词，${keywordData.categories.length} 个类别</small>`;
+        keywordsContainer.appendChild(statsElement);
+    }
+
+    // 更新步骤指示器
+    function updateStep(stepNumber) {
+        steps.forEach((step, index) => {
+            if (index + 1 < stepNumber) {
+                step.classList.add('completed');
+                step.classList.remove('active');
+            } else if (index + 1 === stepNumber) {
+                step.classList.add('active');
+                step.classList.remove('completed');
+            } else {
+                step.classList.remove('active', 'completed');
+            }
+        });
+    }
+
+    // 选择模型类型
+    optionButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+            optionButtons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentModelType = btn.getAttribute('data-type');
+        });
+    });
+
+    // 生成3D模型（增强版）
+    generateBtn.addEventListener('click', async () => {
+        const keywordElements = keywordsContainer.querySelectorAll('.keyword');
+        const keywords = Array.from(keywordElements).map(el => el.textContent);
+        
+        if (keywords.length === 0) {
+            voiceResult.innerHTML += '<p style="color: var(--danger-color);">请先通过语音描述您的模型</p>';
+            return;
+        }
+        
+        loadingElement.classList.add('active');
+        generateBtn.disabled = true;
+        updateStep(3);
+        
+        try {
+            // 模拟生成过程
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // 根据关键词生成更复杂的模型
+            generatedModelData = generateEnhancedModel(keywords, currentModelType);
+            
+            previewContainer.innerHTML = `
+                <i class="fas fa-check-circle" style="color: var(--success-color); font-size: 3rem;"></i>
+                <p style="margin-top: 15px;">3D模型生成成功！</p>
+                <p><small>模型类型: ${getModelTypeName(currentModelType)}</small></p>
+                <p><small>关键词: ${keywords.slice(0, 5).join(', ')}${keywords.length > 5 ? '...' : ''}</small></p>
+                <p><small>您现在可以下载模型文件</small></p>
+            `;
+            
+            voiceResult.innerHTML += '<p style="color: var(--success-color);">3D模型生成成功！</p>';
+            updateStep(4);
+            
+        } catch (error) {
+            voiceResult.innerHTML += '<p style="color: var(--danger-color);">生成失败，请重试</p>';
+            updateStep(2);
+        } finally {
+            loadingElement.classList.remove('active');
+            generateBtn.disabled = false;
+        }
+    });
+
+    // 增强版模型生成
+    function generateEnhancedModel(keywords, type) {
+        // 根据关键词确定模型参数
+        const shape = keywords.find(k => 
+            Object.values(keywordLibrary.shapes).flat().includes(k)) || '立方体';
+        
+        const color = keywords.find(k => 
+            Object.values(keywordLibrary.colors).flat().includes(k)) || '灰色';
+        
+        const material = keywords.find(k => 
+            Object.values(keywordLibrary.materials).flat().includes(k)) || '塑料';
+        
+        // 提取尺寸
+        let size = 10;
+        const sizeKeyword = keywords.find(k => k.match(/\d/));
+        if (sizeKeyword) {
+            const sizeMatch = sizeKeyword.match(/(\d+(?:\.\d+)?)/);
+            if (sizeMatch) size = parseFloat(sizeMatch[1]);
+        }
+        
+        // 根据类型和关键词调整复杂度
+        const complexity = calculateComplexity(keywords, type);
+        
+        return {
+            shape: shape,
+            color: color,
+            material: material,
+            size: size,
+            type: type,
+            complexity: complexity,
+            vertices: generateEnhancedVertices(shape, size, complexity),
+            faces: generateEnhancedFaces(shape, complexity),
+            features: extractFeatures(keywords)
+        };
+    }
+
+    // 计算模型复杂度
+    function calculateComplexity(keywords, type) {
+        let complexity = 1; // 基础复杂度
+        
+        // 根据关键词数量增加复杂度
+        complexity += Math.min(keywords.length * 0.2, 3);
+        
+        // 根据类型调整基础复杂度
+        if (type === 'character') complexity += 2;
+        if (type === 'environment') complexity += 1;
+        if (type === 'architecture') complexity += 1.5;
+        
+        // 特定关键词增加复杂度
+        if (keywords.some(k => ['复杂', '精细', '详细', '镂空', '网格'].includes(k))) {
+            complexity += 2;
+        }
+        
+        return Math.min(complexity, 5); // 最大复杂度为5
+    }
+
+    // 生成增强版顶点数据
+    function generateEnhancedVertices(shape, size, complexity) {
+        const scale = size / 10;
+        const segments = Math.floor(4 + complexity * 2); // 根据复杂度调整细分
+        
+        switch(shape) {
+            case '球体':
+                return generateSphereVertices(scale, segments);
+            case '圆柱体':
+                return generateCylinderVertices(scale, segments);
+            case '圆环':
+                return generateTorusVertices(scale, segments);
+            case '螺旋':
+                return generateSpiralVertices(scale, segments);
+            default:
+                return generateCubeVertices(scale);
+        }
+    }
+
+    // 生成球体顶点
+    function generateSphereVertices(scale, segments) {
+        const vertices = [];
+        for (let i = 0; i <= segments; i++) {
+            const theta = i * Math.PI / segments;
+            for (let j = 0; j <= segments; j++) {
+                const phi = j * 2 * Math.PI / segments;
+                const x = scale * Math.sin(theta) * Math.cos(phi);
+                const y = scale * Math.sin(theta) * Math.sin(phi);
+                const z = scale * Math.cos(theta);
+                vertices.push([x, y, z]);
+            }
+        }
+        return vertices;
+    }
+
+    // 生成圆柱体顶点
+    function generateCylinderVertices(scale, segments) {
+        const vertices = [];
+        for (let i = 0; i <= segments; i++) {
+            const theta = i * 2 * Math.PI / segments;
+            const x = scale * Math.cos(theta);
+            const y = scale * Math.sin(theta);
+            vertices.push([x, y, -scale]); // 底部
+            vertices.push([x, y, scale]);  // 顶部
+        }
+        return vertices;
+    }
+
+    // 生成圆环顶点
+    function generateTorusVertices(scale, segments) {
+        const vertices = [];
+        const tubeRadius = scale * 0.3;
+        for (let i = 0; i <= segments; i++) {
+            const u = i * 2 * Math.PI / segments;
+            for (let j = 0; j <= segments; j++) {
+                const v = j * 2 * Math.PI / segments;
+                const x = (scale + tubeRadius * Math.cos(v)) * Math.cos(u);
+                const y = (scale + tubeRadius * Math.cos(v)) * Math.sin(u);
+                const z = tubeRadius * Math.sin(v);
+                vertices.push([x, y, z]);
+            }
+        }
+        return vertices;
+    }
+
+    // 生成螺旋顶点
+    function generateSpiralVertices(scale, segments) {
+        const vertices = [];
+        for (let i = 0; i <= segments; i++) {
+            const t = i * 4 * Math.PI / segments;
+            const x = scale * Math.cos(t);
+            const y = scale * Math.sin(t);
+            const z = t;
+            vertices.push([x, y, z]);
+        }
+        return vertices;
+    }
+
+    // 生成立方体顶点
+    function generateCubeVertices(scale) {
+        return [
+            [-scale, -scale, -scale], [scale, -scale, -scale],
+            [scale, scale, -scale], [-scale, scale, -scale],
+            [-scale, -scale, scale], [scale, -scale, scale],
+            [scale, scale, scale], [-scale, scale, scale]
+        ];
+    }
+
+    // 生成增强版面数据
+    function generateEnhancedFaces(shape, complexity) {
+        const segments = Math.floor(4 + complexity * 2);
+        
+        switch(shape) {
+            case '球体':
+                return generateSphereFaces(segments);
+            case '圆柱体':
+                return generateCylinderFaces(segments);
+            case '圆环':
+                return generateTorusFaces(segments);
+            default:
+                return generateCubeFaces();
+        }
+    }
+
+    // 生成球体面
+    function generateSphereFaces(segments) {
+        const faces = [];
+        for (let i = 0; i < segments; i++) {
+            for (let j = 0; j < segments; j++) {
+                const a = i * (segments + 1) + j;
+                const b = a + 1;
+                const c = a + (segments + 1);
+                const d = c + 1;
+                faces.push([a, b, d, c]);
+            }
+        }
+        return faces;
+    }
+
+    // 生成圆柱体面
+    function generateCylinderFaces(segments) {
+        const faces = [];
+        for (let i = 0; i < segments; i++) {
+            const next = (i + 1) % segments;
+            // 侧面
+            faces.push([i * 2, next * 2, next * 2 + 1, i * 2 + 1]);
+        }
+        return faces;
+    }
+
+    // 生成圆环面
+    function generateTorusFaces(segments) {
+        const faces = [];
+        for (let i = 0; i < segments; i++) {
+            for (let j = 0; j < segments; j++) {
+                const a = i * (segments + 1) + j;
+                const b = a + 1;
+                const c = (i + 1) * (segments + 1) + j;
+                const d = c + 1;
+                faces.push([a, b, d, c]);
+            }
+        }
+        return faces;
+    }
+
+    // 生成立方体面
+    function generateCubeFaces() {
+        return [
+            [0, 1, 2, 3], [4, 5, 6, 7],
+            [0, 4, 7, 3], [1, 5, 6, 2],
+            [3, 2, 6, 7], [0, 1, 5, 4]
+        ];
+    }
+
+    // 提取特征
+    function extractFeatures(keywords) {
+        const features = [];
+        if (keywords.some(k => ['镂空', '空心', '网格'].includes(k))) features.push('hollow');
+        if (keywords.some(k => ['纹理', '条纹', '花纹'].includes(k))) features.push('textured');
+        if (keywords.some(k => ['圆角', '倒角'].includes(k))) features.push('rounded');
+        return features;
+    }
+
+    // 获取模型类型名称
+    function getModelTypeName(type) {
+        const names = {
+            'object': '物体/道具',
+            'character': '角色/生物',
+            'environment': '环境/场景',
+            'architecture': '建筑/结构'
+        };
+        return names[type] || '物体';
+    }
+
+    // 生成OBJ文件内容
+    function generateOBJContent() {
+        if (!generatedModelData) return "# 没有模型数据";
+        
+        let objContent = `# AI速模生成的3D模型\n`;
+        objContent += `# 形状: ${generatedModelData.shape}\n`;
+        objContent += `# 材质: ${generatedModelData.material}\n`;
+        objContent += `# 大小: ${generatedModelData.size}cm\n`;
+        objContent += `# 复杂度: ${generatedModelData.complexity}\n\n`;
+        
+        // 顶点
+        generatedModelData.vertices.forEach(vertex => {
+            objContent += `v ${vertex[0].toFixed(4)} ${vertex[1].toFixed(4)} ${vertex[2].toFixed(4)}\n`;
+        });
+        
+        objContent += `\n`;
+        
+        // 面
+        generatedModelData.faces.forEach(face => {
+            if (face.length === 3) {
+                objContent += `f ${face[0] + 1} ${face[1] + 1} ${face[2] + 1}\n`;
+            } else {
+                objContent += `f ${face[0] + 1} ${face[1] + 1} ${face[2] + 1} ${face[3] + 1}\n`;
+            }
+        });
+        
+        return objContent;
+    }
+
+    // 生成STL文件内容
+    function generateSTLContent() {
+        if (!generatedModelData) return "solid empty\nendsolid empty";
+        
+        let stlContent = `solid AI_Generated_Model\n`;
+        
+        generatedModelData.faces.forEach(face => {
+            const v1 = generatedModelData.vertices[face[0]];
+            const v2 = generatedModelData.vertices[face[1]];
+            const v3 = generatedModelData.vertices[face[2]];
+            
+            // 计算法向量
+            const u = [v2[0] - v1[0], v2[1] - v1[1], v2[2] - v1[2]];
+            const w = [v3[0] - v1[0], v3[1] - v1[1], v3[2] - v1[2]];
+            const normal = [
+                u[1] * w[2] - u[2] * w[1],
+                u[2] * w[0] - u[0] * w[2],
+                u[0] * w[1] - u[1] * w[0]
+            ];
+            
+            // 归一化
+            const length = Math.sqrt(normal[0]**2 + normal[1]**2 + normal[2]**2);
+            if (length > 0) {
+                normal[0] /= length;
+                normal[1] /= length;
+                normal[2] /= length;
+            }
+            
+            stlContent += `  facet normal ${normal[0].toFixed(6)} ${normal[1].toFixed(6)} ${normal[2].toFixed(6)}\n`;
+            stlContent += `    outer loop\n`;
+            stlContent += `      vertex ${v1[0].toFixed(6)} ${v1[1].toFixed(6)} ${v1[2].toFixed(6)}\n`;
+            stlContent += `      vertex ${v2[0].toFixed(6)} ${v2[1].toFixed(6)} ${v2[2].toFixed(6)}\n`;
+            stlContent += `      vertex ${v3[0].toFixed(6)} ${v3[1].toFixed(6)} ${v3[2].toFixed(6)}\n`;
+            stlContent += `    endloop\n`;
+            stlContent += `  endfacet\n`;
+        });
+        
+        stlContent += `endsolid AI_Generated_Model\n`;
+        return stlContent;
+    }
+
+    // 下载文件函数
+    function downloadFile(content, filename, contentType) {
+        try {
+            const blob = new Blob([content], { type: contentType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            
+            a.href = url;
+            a.download = filename;
+            a.style.display = 'none';
+            
+            document.body.appendChild(a);
+            a.click();
+            
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            return true;
+        } catch (error) {
+            console.error('下载失败:', error);
+            return false;
+        }
+    }
+
+    // 下载OBJ文件
+    downloadObjBtn.addEventListener('click', () => {
+        if (!generatedModelData) {
+            showDownloadStatus('请先生成3D模型', 'error');
+            return;
+        }
+        
+        const objContent = generateOBJContent();
+        const filename = `ai_model_${Date.now()}.obj`;
+        
+        const success = downloadFile(objContent, filename, 'text/plain');
+        
+        if (success) {
+            showDownloadStatus('OBJ文件下载成功！', 'success');
+        } else {
+            showDownloadStatus('下载失败，请重试', 'error');
+        }
+    });
+
+    // 下载STL文件
+    downloadStlBtn.addEventListener('click', () => {
+        if (!generatedModelData) {
+            showDownloadStatus('请先生成3D模型', 'error');
+            return;
+        }
+        
+        const stlContent = generateSTLContent();
+        const filename = `ai_model_${Date.now()}.stl`;
+        
+        const success = downloadFile(stlContent, filename, 'text/plain');
+        
+        if (success) {
+            showDownloadStatus('STL文件下载成功！', 'success');
+        } else {
+            showDownloadStatus('下载失败，请重试', 'error');
+        }
+    });
+
+    // 显示下载状态
+    function showDownloadStatus(message, type) {
+        downloadStatus.innerHTML = `
+            <div class="download-status ${type === 'success' ? 'download-success' : 'download-error'}">
+                ${message}
+            </div>
+        `;
+        
+        setTimeout(() => {
+            downloadStatus.innerHTML = '';
+        }, 3000);
+    }
+
+    // 初始化录音按钮
+    recordBtn.addEventListener('click', () => {
+        if (!isRecording) {
+            initSpeechRecognition();
+            recognition.start();
+            updateStep(1);
+        } else {
+            recognition.stop();
+        }
+    });
+
+    // 页面加载完成后的初始化
+    window.addEventListener('load', () => {
+        updateStep(1);
+    });
+</script>
